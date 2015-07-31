@@ -85,3 +85,6 @@ allow mediaserver oemfs:dir search;
 allow mediaserver oemfs:file r_file_perms;
 
 allow mediaserver bootanim:binder { transfer call };
+
+# Allow ViPER4Android in enforcing mode.
+userdebug_or_eng(`allow mediaserver mediaserver_tmpfs:file { execute };')
