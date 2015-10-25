@@ -130,6 +130,7 @@ binder_call(system_server, binderservicedomain)
 binder_call(system_server, gatekeeperd)
 binder_call(system_server, fingerprintd)
 binder_call(system_server, appdomain)
+binder_call(system_server, bootanim)
 binder_call(system_server, dumpstate)
 binder_service(system_server)
 
@@ -291,6 +292,11 @@ set_prop(system_server, powerctl_prop)
 set_prop(system_server, fingerprint_prop)
 
 # ctl interface
+allow system_server ctl_bootanim_prop:property_service set;
+
+# Use open file provided by bootanim.
+allow system_server bootanim:fd use;
+
 set_prop(system_server, ctl_default_prop)
 set_prop(system_server, ctl_dhcp_pan_prop)
 set_prop(system_server, ctl_bugreport_prop)
@@ -451,7 +457,10 @@ neverallow system_server { bluetooth_data_file nfc_data_file shell_data_file app
 # a bug (for example, bug 16317188), or represents an attempt by
 # system server to dynamically load a dex file, something we do not
 # want to allow.
-neverallow system_server dex2oat_exec:file no_x_file_perms;
+ifelse(shipping_build, `true',
+  `neverallow system_server dex2oat_exec:file no_x_file_perms;'
+,
+)
 
 # The only block device system_server should be accessing is
 # the frp_block_device. This helps avoid a system_server to root

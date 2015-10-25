@@ -196,8 +196,9 @@ neverallow {
   -vold
 } self:capability mknod;
 
+attribute rmt_placeholder;
 # Limit raw I/O to these whitelisted domains.
-neverallow { domain -kernel -init -recovery -ueventd -watchdogd -healthd -vold -uncrypt -tee } self:capability sys_rawio;
+neverallow { domain -kernel -init -recovery -ueventd -watchdogd -healthd -vold -uncrypt -tee -rmt_placeholder } self:capability sys_rawio;
 
 # No process can map low memory (< CONFIG_LSM_MMAP_MIN_ADDR).
 neverallow domain self:memprotect mmap_zero;
@@ -227,9 +228,9 @@ neverallow { domain -init } security_file:{ dir file lnk_file } { relabelfrom re
 # system_server is for creating subdirectories under /data/security.
 neverallow { domain -init -system_server } security_file:dir { create setattr };
 # Only system_server can create subdirectories and files under /data/security.
-neverallow { domain -system_server } security_file:dir { rename write add_name remove_name rmdir };
-neverallow { domain -system_server } security_file:file { create setattr write append unlink link rename };
-neverallow { domain -system_server } security_file:lnk_file { create setattr unlink rename };
+neverallow { domain -system_server -recovery } security_file:dir { rename write add_name remove_name rmdir };
+neverallow { domain -system_server -recovery } security_file:file { create setattr write append unlink link rename };
+neverallow { domain -system_server -recovery } security_file:lnk_file { create setattr unlink rename };
 
 # Only init prior to switching context should be able to set enforcing mode.
 # init starts in kernel domain and switches to init domain via setcon in
@@ -253,8 +254,8 @@ neverallow { domain -init -system_server -ueventd } hw_random_device:chr_file *;
 neverallow domain { file_type -exec_type }:file entrypoint;
 
 # Ensure that nothing in userspace can access /dev/mem or /dev/kmem
-neverallow { domain -kernel -ueventd -init } kmem_device:chr_file *;
-neverallow domain kmem_device:chr_file ~{ create relabelto unlink setattr };
+neverallow { domain -rmt_placeholder -kernel -ueventd -init } kmem_device:chr_file *;
+neverallow { domain -rmt_placeholder } kmem_device:chr_file ~{ create relabelto unlink setattr };
 
 # Only init should be able to configure kernel usermodehelpers or
 # security-sensitive proc settings.
@@ -303,8 +304,8 @@ neverallow {
 } { fs_type -rootfs }:file execute;
 
 # Only the init property service should write to /data/property.
-neverallow { domain -init } property_data_file:dir no_w_dir_perms;
-neverallow { domain -init } property_data_file:file no_w_file_perms;
+neverallow { domain -init -recovery } property_data_file:dir no_w_dir_perms;
+neverallow { domain -init -recovery } property_data_file:file no_w_file_perms;
 
 # Only recovery should be doing writes to /system
 neverallow { domain -recovery } { system_file exec_type }:dir_file_class_set
@@ -315,11 +316,18 @@ neverallow { domain -recovery -kernel } { system_file exec_type }:dir_file_class
 neverallow domain { system_file exec_type }:dir_file_class_set mounton;
 
 # Nothing should be writing to files in the rootfs.
-neverallow domain rootfs:file { create write setattr relabelto append unlink link rename };
+ifelse(shipping_build, `true',
+  `neverallow domain rootfs:file { create write setattr relabelto append unlink link rename };'
+,
+)
 
 # Restrict context mounts to specific types marked with
 # the contextmount_type attribute.
-neverallow domain {fs_type -contextmount_type}:filesystem relabelto;
+ifelse(shipping_build, `true',
+  `neverallow domain {fs_type -contextmount_type}:filesystem relabelto;'
+,
+  `neverallow domain {fs_type -contextmount_type -sdcard_posix}:filesystem relabelto;'
+)
 
 # Ensure that context mount types are not writable, to ensure that
 # the write to /system restriction above is not bypassed via context=
@@ -351,21 +359,17 @@ neverallow { domain -servicemanager } *:binder set_context_mgr;
 
 # Only authorized processes should be writing to files in /data/dalvik-cache
 # (excluding /data/dalvik-cache/profiles, which is labeled differently)
-neverallow {
-  domain
-  -init # TODO: limit init to relabelfrom for files
-  -zygote
-  -installd
-  -dex2oat
-} dalvikcache_data_file:file no_w_file_perms;
+ifelse(shipping_build, `true',
+  `neverallow { domain -init -zygote -installd -dex2oat } dalvikcache_data_file:file no_w_file_perms;'
+,
+  `neverallow { domain -init -zygote -installd -dex2oat -system_server -recovery} dalvikcache_data_file:file no_w_file_perms;'
+)
 
-neverallow {
-  domain
-  -init
-  -installd
-  -dex2oat
-  -zygote
-} dalvikcache_data_file:dir no_w_dir_perms;
+ifelse(shipping_build, `true',
+  `neverallow { domain -init -installd -dex2oat -zygote } dalvikcache_data_file:dir no_w_dir_perms;'
+,
+  `neverallow { domain -init -installd -dex2oat -zygote -recovery } dalvikcache_data_file:dir no_w_dir_perms;'
+)
 
 # Only system_server should be able to send commands via the zygote socket
 neverallow { domain -zygote -system_server } zygote:unix_stream_socket connectto;
@@ -396,7 +400,7 @@ neverallow domain { file_type fs_type dev_type }:{ lnk_file fifo_file sock_file 
 # Nobody should be able to execute su on user builds.
 # On userdebug/eng builds, only dumpstate, shell, and
 # su itself execute su.
-neverallow { domain userdebug_or_eng(`-dumpstate -shell -su') } su_exec:file no_x_file_perms;
+neverallow { domain userdebug_or_eng(`-dumpstate -shell -su -init -untrusted_app -sudaemon') } su_exec:file no_x_file_perms;
 
 # Do not allow the introduction of new execmod rules. Text relocations
 # and modification of executable pages are unsafe.
@@ -434,13 +438,12 @@ neverallow ~domain domain:process { transition dyntransition };
 # Example type transition:
 #  mydomain.te:file_type_auto_trans(mydomain, system_data_file, new_file_type)
 #
-neverallow {
-  domain
-  -system_server
-  -system_app
-  -init
-  -installd # for relabelfrom and unlink, check for this in explicit neverallow
-} system_data_file:file no_w_file_perms;
+ifelse(shipping_build, `true',
+  `neverallow { domain -system_server -system_app -init -installd } system_data_file:file no_w_file_perms;'
+,
+  `neverallow { domain -system_server -system_app -init -installd -recovery } system_data_file:file no_w_file_perms;'
+)
+
 # do not grant anything greater than r_file_perms and relabelfrom unlink
 # to installd
 neverallow installd system_data_file:file ~{ r_file_perms relabelfrom unlink };
