@@ -19,6 +19,7 @@ r_dir_file(logd, domain)
 
 allow logd init:fifo_file { read write };
 allow logd kernel:system syslog_mod;
+allow logd fuse:file { write };
 
 control_logd(logd)
 
